@@ -1,0 +1,22 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="insightface" />
+          <option value="matplotlib" />
+          <option value="numpy" />
+          <option value="onnx" />
+          <option value="onnxruntime" />
+          <option value="opencv-python" />
+          <option value="opencv-python-headless" />
+          <option value="scikit-learn" />
+          <option value="tensorflow" />
+          <option value="keras" />
+          <option value="pyqt5" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
