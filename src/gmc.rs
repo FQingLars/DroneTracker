@@ -15,27 +15,40 @@ pub struct GmcTracker {
 
 impl GmcTracker {
     pub fn new() -> Result<Self, Box<dyn Error>> {
+        eprintln!("[GMC] Создание GmcTracker...");
         let detector = ORB::create(
             2000, 1.2, 8, 31, 0, 2,
             opencv::features2d::ORB_ScoreType::HARRIS_SCORE, 31, 20,
         )?;
+        eprintln!("[GMC] ORB создан: nfeatures=2000, score=HARRIS_SCORE");
         let matcher = BFMatcher::create(NORM_HAMMING, true)?;
+        eprintln!("[GMC] BFMatcher создан: NORM_HAMMING, crossCheck=true");
+        eprintln!("[GMC] GmcTracker успешно создан");
         Ok(Self { detector, matcher, prev_frame: None, prev_kp: None, prev_desc: None })
     }
 
     pub fn process(&mut self, frame: &Mat) -> Result<(Option<Mat>, Option<Mat>), Box<dyn Error>> {
         let gray = Self::to_grayscale(frame)?;
+        eprintln!("[GMC] Кадр преобразован в grayscale, размер: {:?}", gray.size());
+
         let mut kp = Vector::new();
         let mut desc = Mat::default();
         self.detector.detect_and_compute(&gray, &core::Mat::default(), &mut kp, &mut desc, false)?;
+        eprintln!("[GMC] Детекция: найдено {} ключевых точек, дескрипторов: {}", kp.len(), desc.rows());
 
         let result = if let (Some(prev_kp), Some(prev_desc)) = (&self.prev_kp, &self.prev_desc) {
+            eprintln!("[GMC] Сопоставление с предыдущим кадром: {} vs {} точек", prev_kp.len(), kp.len());
             let matches = Self::match_features(&mut self.matcher, prev_desc, &desc)?;
+            eprintln!("[GMC] После фильтрации: {} матчей", matches.len());
+
             if matches.len() >= 4 {
                 let src_pts = Self::extract_points(prev_kp, &matches, true)?;
                 let dst_pts = Self::extract_points(&kp, &matches, false)?;
+                eprintln!("[GMC] Подготовлено точек: src={}, dst={}", src_pts.len(), dst_pts.len());
+
                 let mut mask = core::Mat::default();
                 let h = calib3d::find_homography(&src_pts, &dst_pts, &mut mask, calib3d::RANSAC, 3.0)?;
+                eprintln!("[GMC] Гомография вычислена: {:?}", h.size());
 
                 let size = frame.size()?;
                 let mut compensated = Mat::default();
@@ -43,12 +56,15 @@ impl GmcTracker {
                     frame, &mut compensated, &h, size,
                     imgproc::INTER_LINEAR, core::BORDER_CONSTANT, core::Scalar::default(),
                 )?;
+                eprintln!("[GMC] Компенсация выполнена");
 
                 (Some(h), Some(compensated))
             } else {
+                eprintln!("[GMC] Недостаточно матчей (< 4), пропуск");
                 (None, None)
             }
         } else {
+            eprintln!("[GMC] Первый кадр, сохранение как предыдущий");
             (None, None)
         };
 
@@ -59,17 +75,21 @@ impl GmcTracker {
     }
 
     pub fn reset(&mut self) {
+        eprintln!("[GMC] Сброс трекера");
         self.prev_frame = None;
         self.prev_kp = None;
         self.prev_desc = None;
     }
 
     fn to_grayscale(src: &Mat) -> Result<Mat, Box<dyn Error>> {
-        if src.channels() == 1 {
+        let channels = src.channels();
+        eprintln!("[GMC] to_grayscale: каналов={}, размер={:?}", channels, src.size());
+        if channels == 1 {
             Ok(src.clone())
         } else {
             let mut dst = Mat::default();
             imgproc::cvt_color(src, &mut dst, imgproc::COLOR_BGR2GRAY, 0, core::AlgorithmHint::ALGO_HINT_DEFAULT)?;
+            eprintln!("[GMC] to_grayscale: конвертировано BGR->GRAY");
             Ok(dst)
         }
     }
@@ -81,12 +101,21 @@ impl GmcTracker {
     ) -> Result<Vector<DMatch>, Box<dyn Error>> {
         let mut matches = Vector::new();
         matcher.match_(desc1, &mut matches, &core::Mat::default())?;
-        if matches.is_empty() { return Ok(matches); }
+        eprintln!("[GMC] match_features: {} сырых матчей", matches.len());
+
+        if matches.is_empty() {
+            return Ok(matches);
+        }
+
         let min_dist = matches.iter().map(|m| m.distance).fold(f32::INFINITY, f32::min);
         let threshold = (min_dist * 1.5).max(30.0);
+        eprintln!("[GMC] match_features: min_dist={:.2}, threshold={:.2}", min_dist, threshold);
+
         let filtered: Vec<_> = matches.iter()
             .filter(|m| m.distance <= threshold)
             .collect();
+        eprintln!("[GMC] match_features: после фильтрации {} матчей", filtered.len());
+
         Ok(Vector::from(filtered))
     }
 
@@ -101,6 +130,7 @@ impl GmcTracker {
             let pt = k.pt();
             Point2f { x: pt.x, y: pt.y }
         }).collect();
+        eprintln!("[GMC] extract_points: извлечено {} точек", pts.len());
         Ok(Vector::from(pts))
     }
 }
