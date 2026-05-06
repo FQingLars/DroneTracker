@@ -1,5 +1,5 @@
 use eframe::{self, App, Frame as EFrame};
-use egui::{CentralPanel, Grid, TopBottomPanel};
+use egui::{CentralPanel, TopBottomPanel};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use opencv::core::Mat;
 use opencv::prelude::*;
@@ -8,7 +8,8 @@ use rfd::FileDialog;
 use std::sync::mpsc::{channel, Sender, Receiver};
 
 use crate::gmc::GmcTracker;
-use crate::types::CsvRow;
+use crate::height::HeightEstimator;
+use crate::types::{CsvRow, Frame};
 
 pub struct TrackerApp {
     video_path: Option<String>,
@@ -246,10 +247,22 @@ impl TrackerApp {
             }
         };
 
+        // Создаем HeightEstimator с параметрами камеры (нужно настроить под ваше видео)
+        // focal_px, cx, cy - параметры камеры, reference_height - высота в метрах
+        eprintln!("[PROC] Создание HeightEstimator");
+        let mut height_estimator = match HeightEstimator::new(800.0, 960.0, 540.0, 12.8) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                eprintln!("[PROC] Ошибка создания HeightEstimator: {} (Z будет всегда 0)", e);
+                None
+            }
+        };
+
         let mut frame = Mat::default();
         let mut frame_num = 0u32;
-        let mut pos = (0.0f64, 0.0f64, 0.0f64);
+        let mut pos = (0.0f64, 0.0f64, 12.8f64); // Начинаем с reference_height
         let mut sent = 0u32;
+        let mut prev_frame_data: Option<Frame> = None;
 
         eprintln!("[PROC] Начало обработки кадров");
         while let Ok(true) = cap.read(&mut frame) {
@@ -261,14 +274,54 @@ impl TrackerApp {
 
             eprintln!("[PROC] Кадр {}: обработка", frame_num);
             match tracker.process(&frame) {
-                Ok((Some(h), _)) => {
+                Ok((Some(h), Some(_compensated))) => {
                     let dx = *h.at_2d::<f64>(0, 2).unwrap_or(&0.0);
                     let dy = *h.at_2d::<f64>(1, 2).unwrap_or(&0.0);
-                    let scale = 0.001;
+                    // Движение камеры обратно движению точек, увеличенный масштаб для теста
+                    let scale = 5.0;
+                    pos.0 -= dx * scale;
+                    pos.1 -= dy * scale;
+
+                    // Оценка высоты через HeightEstimator
+                    if let Some(ref mut he) = height_estimator {
+                        if let Some(ref prev) = prev_frame_data {
+                            match he.estimate(&prev.data, &frame) {
+                                Ok(z) => {
+                                    pos.2 = z;
+                                    eprintln!(
+                                        "[PROC] Кадр {}: высота обновлена: {:.2}m",
+                                        frame_num, z
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "[PROC] Кадр {}: ошибка оценки высоты: {}",
+                                        frame_num, e
+                                    );
+                                }
+                            }
+                        }
+                        prev_frame_data = Some(Frame {
+                            id: frame_num,
+                            data: frame.clone(),
+                            pos: crate::types::Point { x: pos.0, y: pos.1, z: pos.2 },
+                            rot: crate::types::Rotation { yaw: 0.0, pitch: 0.0, roll: 0.0 },
+                        });
+                    }
+
+                    eprintln!(
+                        "[PROC] Кадр {}: dx={:.4}, dy={:.4}, pos=({:.4}, {:.4}, {:.4})",
+                        frame_num, dx, dy, pos.0, pos.1, pos.2
+                    );
+                }
+                Ok((Some(h), None)) => {
+                    let dx = *h.at_2d::<f64>(0, 2).unwrap_or(&0.0);
+                    let dy = *h.at_2d::<f64>(1, 2).unwrap_or(&0.0);
+                    let scale = 0.1;
                     pos.0 += dx * scale;
                     pos.1 += dy * scale;
                     eprintln!(
-                        "[PROC] Кадр {}: dx={:.4}, dy={:.4}, pos=({:.4}, {:.4}, {:.4})",
+                        "[PROC] Кадр {}: dx={:.4}, dy={:.4}, pos=({:.4}, {:.4}, {:.4}) (без компенсации)",
                         frame_num, dx, dy, pos.0, pos.1, pos.2
                     );
                 }

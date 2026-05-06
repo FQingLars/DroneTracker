@@ -1,7 +1,4 @@
-mod types;
-mod height;
-mod gmc;
-mod gui;
+use Tracker::gui;
 
 fn main() {
     if let Err(e) = gui::run_gui() {

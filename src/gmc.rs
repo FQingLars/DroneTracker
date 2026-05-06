@@ -21,7 +21,7 @@ impl GmcTracker {
             opencv::features2d::ORB_ScoreType::HARRIS_SCORE, 31, 20,
         )?;
         eprintln!("[GMC] ORB создан: nfeatures=2000, score=HARRIS_SCORE");
-        let matcher = BFMatcher::create(NORM_HAMMING, true)?;
+        let matcher = BFMatcher::create(NORM_HAMMING, false)?;
         eprintln!("[GMC] BFMatcher создан: NORM_HAMMING, crossCheck=true");
         eprintln!("[GMC] GmcTracker успешно создан");
         Ok(Self { detector, matcher, prev_frame: None, prev_kp: None, prev_desc: None })
@@ -96,11 +96,14 @@ impl GmcTracker {
 
     fn match_features(
         matcher: &mut core::Ptr<BFMatcher>,
-        desc1: &Mat,
-        _desc2: &Mat,
+        query_desc: &Mat,
+        train_desc: &Mat,
     ) -> Result<Vector<DMatch>, Box<dyn Error>> {
         let mut matches = Vector::new();
-        matcher.match_(desc1, &mut matches, &core::Mat::default())?;
+        opencv::prelude::DescriptorMatcherTrait::clear(matcher)?;
+        let train_vec: Vector<Mat> = Vector::from(vec![train_desc.clone()]);
+        matcher.add(&train_vec)?;
+        matcher.match_(query_desc, &mut matches, &core::Mat::default())?;
         eprintln!("[GMC] match_features: {} сырых матчей", matches.len());
 
         if matches.is_empty() {
@@ -114,6 +117,7 @@ impl GmcTracker {
         let filtered: Vec<_> = matches.iter()
             .filter(|m| m.distance <= threshold)
             .collect();
+
         eprintln!("[GMC] match_features: после фильтрации {} матчей", filtered.len());
 
         Ok(Vector::from(filtered))
