@@ -260,7 +260,8 @@ impl TrackerApp {
 
         let mut frame = Mat::default();
         let mut frame_num = 0u32;
-        let mut pos = (0.0f64, 0.0f64, 12.8f64); // Начинаем с reference_height
+        let intrinsics = CameraIntrinsics::default();
+        let mut pos = (0.0f64, 0.0f64, 1.0f64);
         let mut sent = 0u32;
         let mut prev_frame_data: Option<Frame> = None;
 
@@ -274,39 +275,31 @@ impl TrackerApp {
 
             eprintln!("[PROC] Кадр {}: обработка", frame_num);
             match tracker.process(&frame) {
-                Ok((Some(h), Some(_compensated))) => {
-                    let dx = *h.at_2d::<f64>(0, 2).unwrap_or(&0.0);
-                    let dy = *h.at_2d::<f64>(1, 2).unwrap_or(&0.0);
-                    // Движение камеры обратно движению точек, увеличенный масштаб для теста
-                    let scale = 5.0;
-                    pos.0 -= dx * scale;
-                    pos.1 -= dy * scale;
+                Ok((Some(frame_pair), _)) => {
+                    let h = frame_pair_to_homography(&frame_pair)?;
+                    let dx_px = *h.at_2d::<f64>(0, 2)?;
+                    let dy_px = *h.at_2d::<f64>(1, 2)?;
 
-                    // Оценка высоты через HeightEstimator
+                    let dx_rel = dx_px / intrinsics.fx;
+                    let dy_rel = dy_px / intrinsics.fy;
+
                     if let Some(ref mut he) = height_estimator {
-                        if let Some(ref prev) = prev_frame_data {
-                            match he.estimate(&prev.data, &frame) {
-                                Ok(z) => {
-                                    pos.2 = z;
-                                    eprintln!(
-                                        "[PROC] Кадр {}: высота обновлена: {:.2}m",
-                                        frame_num, z
-                                    );
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "[PROC] Кадр {}: ошибка оценки высоты: {}",
-                                        frame_num, e
-                                    );
+                        match he.estimate_height_change(&frame_pair) {
+                            Ok((delta_z_rel, scale, _, is_unreliable)) => {
+                                if !is_unreliable {
+                                    // Мультипликативное обновление: h_new = h_old / s
+                                    pos.2 /= scale;
+
+                                    // 4. Горизонтальное движение с проективной коррекцией
+                                    // Смещение в относительных единицах зависит от текущей высоты
+                                    pos.0 -= dx_rel * pos.2;
+                                    pos.1 -= dy_rel * pos.2;
                                 }
                             }
+                            Err(e) => eprintln!("[PROC] Ошибка оценки высоты: {}", e),
                         }
-                        prev_frame_data = Some(Frame {
-                            id: frame_num,
-                            data: frame.clone(),
-                            pos: crate::types::Point { x: pos.0, y: pos.1, z: pos.2 },
-                            rot: crate::types::Rotation { yaw: 0.0, pitch: 0.0, roll: 0.0 },
-                        });
+
+                        let _ = tx.send((pos.0, pos.1, pos.2, frame_num));
                     }
 
                     eprintln!(
