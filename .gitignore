@@ -3,6 +3,7 @@
 /src/THYZ_2026.mp4
 /src/norm_trajectory.csv
 /src/trajectory.csv
+<<<<<<< HEAD
 output.csv
 output_comparison.csv
 output.csv
@@ -11,3 +12,6 @@ output_xy.png
 output_y.png
 output_z.png
 /src/bin/
+=======
+/contextify
+>>>>>>> 402efa6 (Recreate commit - recreated tracker beacuse I saw focal GT coords)
